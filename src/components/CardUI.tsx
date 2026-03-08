@@ -28,6 +28,7 @@ export const CardUI: React.FC<CardUIProps> = ({ card, cat, img, loading, onGener
             <button 
               onClick={(e) => { e.stopPropagation(); onGenerate(); }} 
               className="no-print p-1 bg-white/60 hover:bg-white text-indigo-600 rounded-full shadow-lg transition-all active:scale-90 border border-white/30"
+              title="Genera illustrazione con IA"
             >
               <Sparkles size={12} />
             </button>

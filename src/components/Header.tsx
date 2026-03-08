@@ -10,7 +10,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab, onStartGame }) => {
   const tabs = [
     { id: 'DECK', label: 'Mazzo', icon: <Layout size={16}/> },
-    { id: 'PLAY', label: 'Gioca', icon: <Play size={16}/> },
+    { id: 'PLAY', label: 'La Tua Mano', icon: <Play size={16}/> },
     { id: 'SETTINGS', label: 'Opzioni', icon: <Settings size={16}/> },
     { id: 'RULES', label: 'Guida', icon: <Info size={16}/> }
   ];
@@ -44,8 +44,9 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab, onStart
         <button 
           onClick={onStartGame} 
           className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-indigo-700 active:scale-95 transition-all shadow-lg flex items-center gap-2"
+          title="Estrai una nuova mano di carte"
         >
-          <Play size={16}/> Inizia
+          <Play size={16}/> Estrai Mano
         </button>
       </div>
     </header>

@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import { 
   ArrowLeft, Shuffle, MousePointer2, Check, PlusCircle, 
-  Play, Sparkles, RefreshCw, Eye, Flag, Settings, Layout, BrainCircuit, Dices, Heart, Scale, Layers
+  Play, Sparkles, RefreshCw, Eye, Flag, Settings, Layout, BrainCircuit, Dices, Heart, Scale, Layers, FileText
 } from 'lucide-react';
+// @ts-ignore
+import html2pdf from 'html2pdf.js';
 import { 
-  CATEGORIES, REAL_DECK, RANDOM_SITUATIONS, STORY_TONES, 
+  CATEGORIES, REAL_DECK, STORY_TONES, 
   LANGUAGE_STYLES, STORY_LENGTHS, ILLUSTRATION_STYLES 
 } from './constants';
 import { CardData, Category } from './types';
-import { generateStory, generateThematicDeck, generateCardImage } from './services/ai';
+import { generateStory, generateThematicDeck, generateCardImage, generateRandomSituation } from './services/ai';
 import { CardUI } from './components/CardUI';
 import { AiAssistantModal } from './components/AiAssistantModal';
 import { ZoomModal } from './components/ZoomModal';
@@ -46,6 +48,19 @@ const App = () => {
   const [gameFinals, setGameFinals] = useState<CardData[]>([]);
   const [revealedFinals, setRevealedFinals] = useState<number[]>([]);
 
+  const downloadPDF = (elementId: string, filename: string) => {
+    const element = document.getElementById(elementId);
+    if (!element) return;
+    const opt = {
+      margin:       10,
+      filename:     filename,
+      image:        { type: 'jpeg' as const, quality: 0.98 },
+      html2canvas:  { scale: 2, useCORS: true },
+      jsPDF:        { unit: 'mm' as const, format: 'a4', orientation: 'portrait' as const }
+    };
+    html2pdf().set(opt).from(element).save();
+  };
+
   const handleGenerateImage = async (card: CardData, uniqueId: string, force = false) => {
     if (!force && generatedImages[uniqueId]) return;
     setLoadingCards(prev => ({ ...prev, [uniqueId]: true }));
@@ -60,13 +75,44 @@ const App = () => {
     setLoadingCards(prev => ({ ...prev, [uniqueId]: false }));
   };
 
-  const handleRandomSituation = () => {
+  const generateAllImages = async () => {
+    const currentDeck = isThematicMode && thematicDeck ? thematicDeck : baseDeck;
+    const cardsToGenerate = filter === 'ALL' ? currentDeck : currentDeck.filter(c => c.cat === filter);
+    
+    // Generate images in batches of 5 to avoid rate limits while being faster
+    const batchSize = 5;
+    for (let i = 0; i < cardsToGenerate.length; i += batchSize) {
+      const batch = cardsToGenerate.slice(i, i + batchSize);
+      const promises = batch.map(async (card) => {
+        const originalIndex = currentDeck.findIndex(c => c.title === card.title && c.desc === card.desc);
+        if (originalIndex === -1) return;
+        
+        const uniqueId = isThematicMode ? `thematic-${originalIndex}` : `base-${originalIndex}`;
+        
+        if (!generatedImages[uniqueId] && !loadingCards[uniqueId]) {
+          await handleGenerateImage(card, uniqueId);
+        }
+      });
+      
+      await Promise.all(promises);
+      
+      // Small delay between batches
+      if (i + batchSize < cardsToGenerate.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+  };
+
+  const handleRandomSituation = async () => {
     setDiceAnimating(true);
-    setTimeout(() => {
-      const randomIdx = Math.floor(Math.random() * RANDOM_SITUATIONS.length);
-      setNewDeckInput(RANDOM_SITUATIONS[randomIdx]);
+    try {
+      const situation = await generateRandomSituation();
+      setNewDeckInput(situation);
+    } catch (error) {
+      console.error("Failed to generate random situation", error);
+    } finally {
       setDiceAnimating(false);
-    }, 400);
+    }
   };
 
   const startGame = () => {
@@ -95,10 +141,38 @@ const App = () => {
     setRevealedFinals([]);
     setActiveTab('PLAY');
     
-    newHand.forEach((card, i) => handleGenerateImage(card, `play-hand-${i}`, true));
-    newFinals.forEach((card, i) => handleGenerateImage(card, `play-final-${i}`, true));
+    // Generate images sequentially to avoid rate limits
+    setTimeout(() => {
+      generateAllImagesForHand(newHand, newFinals);
+    }, 100);
   };
 
+  const generateAllImagesForHand = async (handParam?: CardData[], finalsParam?: CardData[]) => {
+    const hand = Array.isArray(handParam) ? handParam : gameHand;
+    const finals = Array.isArray(finalsParam) ? finalsParam : gameFinals;
+    
+    const allCards = [
+      ...hand.map((card, i) => ({ card, uniqueId: `play-hand-${i}` })),
+      ...finals.map((card, i) => ({ card, uniqueId: `play-final-${i}` }))
+    ];
+
+    // Generate images in batches of 5
+    const batchSize = 5;
+    for (let i = 0; i < allCards.length; i += batchSize) {
+      const batch = allCards.slice(i, i + batchSize);
+      const promises = batch.map(async ({ card, uniqueId }) => {
+        if (!generatedImages[uniqueId] && !loadingCards[uniqueId]) {
+          await handleGenerateImage(card, uniqueId, true);
+        }
+      });
+      
+      await Promise.all(promises);
+      
+      if (i + batchSize < allCards.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+  };
   const generateStoryFromHand = async () => {
     if (!gameHand.length) return;
     setAiAssistant({ open: true, loading: true, content: null, title: "Narratore AI" });
@@ -181,9 +255,12 @@ const App = () => {
         {activeTab === 'SETTINGS' && (
           <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500 overflow-visible">
              <div className="bg-white rounded-[3rem] p-10 border shadow-xl">
-                <h2 className="text-3xl font-black uppercase text-slate-900 mb-10 flex items-center gap-3">
-                  <Settings className="text-indigo-600" size={32}/> Configurazione
-                </h2>
+                <div className="mb-10">
+                  <h2 className="text-3xl font-black uppercase text-slate-900 flex items-center gap-3 mb-2">
+                    <Settings className="text-indigo-600" size={32}/> Configurazione
+                  </h2>
+                  <p className="text-slate-500 font-medium text-lg">Personalizza le regole del gioco e il comportamento dell'Intelligenza Artificiale.</p>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
                   <section className="space-y-8 p-6 bg-slate-50 rounded-3xl border border-slate-100 font-medium">
                     <h4 className="text-xs font-black uppercase tracking-widest text-indigo-600 flex items-center gap-2">
@@ -254,7 +331,8 @@ const App = () => {
             <div className="grid grid-cols-1 gap-6 mb-8 no-print font-medium">
               <div className="bg-white rounded-[2.5rem] p-10 shadow-xl border-4 border-indigo-50 flex flex-col items-center text-center gap-6 relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50/50 rounded-full -mr-16 -mt-16 blur-2xl"></div>
-                <h3 className="text-3xl font-black text-slate-900 uppercase tracking-tighter z-10">Generatore Tematico</h3>
+                <h3 className="text-3xl font-black text-slate-900 uppercase tracking-tighter z-10 mb-2">Generatore Tematico</h3>
+                <p className="text-slate-500 font-medium text-lg mb-2 z-10 max-w-2xl mx-auto">Scrivi un argomento (es. "Cyberbullismo", "Avventura nello Spazio") e l'IA creerà un mazzo di carte unico per la tua storia.</p>
                 <div className="flex gap-4 w-full max-w-2xl relative z-10">
                   <div className="flex-grow relative">
                     <input 
@@ -268,54 +346,75 @@ const App = () => {
                     <button 
                       onClick={handleRandomSituation} 
                       className={`absolute right-3 top-1/2 -translate-y-1/2 p-2.5 text-indigo-400 hover:text-indigo-600 transition-all hover:bg-white rounded-xl shadow-sm ${diceAnimating ? 'rotate-180 scale-125' : ''}`}
+                      title="Suggerisci un tema casuale"
                     >
                       <Shuffle size={20} />
                     </button>
                   </div>
                   <button 
                     onClick={createMiniDeckFromAI} 
-                    className="bg-indigo-600 text-white px-8 py-4 rounded-2xl shadow-xl hover:bg-indigo-700 active:scale-95 group transition-all font-bold"
+                    className="bg-indigo-600 text-white px-8 py-4 rounded-2xl shadow-xl hover:bg-indigo-700 active:scale-95 group transition-all font-bold flex items-center justify-center gap-2"
                   >
-                    <Sparkles size={24} className="group-hover:rotate-12 transition-all"/>
+                    <Sparkles size={24} className="group-hover:rotate-12 transition-all"/> <span className="hidden sm:inline">Genera</span>
                   </button>
                 </div>
-                <div className="flex flex-wrap justify-center items-center gap-4 z-10">
+                <div className="flex flex-wrap justify-center items-center gap-4 z-10 mt-2">
                   {isThematicMode && (
                     <button onClick={resetToFullDeck} className="flex items-center gap-2 text-slate-400 hover:text-red-500 font-bold text-xs transition-colors">
-                      <ArrowLeft size={14}/> Mazzo Originale
+                      <ArrowLeft size={14}/> Torna al Mazzo Originale
                     </button>
                   )}
                   <button 
                     onClick={() => setManualMode(!manualMode)} 
-                    className={`flex items-center gap-2 px-6 py-3 rounded-xl text-xs font-black uppercase border-2 transition-all ${manualMode ? 'bg-amber-100 border-amber-500 text-amber-700 shadow-md' : 'bg-white border-slate-100 text-slate-400 font-medium'}`}
+                    className={`flex items-center gap-2 px-6 py-3 rounded-xl text-xs font-black uppercase border-2 transition-all ${manualMode ? 'bg-amber-100 border-amber-500 text-amber-700 shadow-md' : 'bg-white border-slate-100 text-slate-400 font-medium hover:border-slate-300'}`}
                   >
-                    <MousePointer2 size={16}/> {manualMode ? `Scelta Manuale delle Carte (${selectedHand.length}/${gameHandLimit})` : 'Generazione Automatica del Mazzo'}
+                    <MousePointer2 size={16}/> {manualMode ? `Componi la tua Mano Manualmente (${selectedHand.length}/${gameHandLimit})` : 'Scegli tu le carte da giocare (Modalità Manuale)'}
                   </button>
                 </div>
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2 mb-8 no-print sticky top-24 z-30 py-3 bg-slate-100/80 backdrop-blur-md border-b font-black">
-              <button 
-                onClick={() => setFilter('ALL')} 
-                className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase border-2 transition ${filter === 'ALL' ? 'bg-slate-900 text-white shadow-xl border-slate-900' : 'bg-white text-slate-400 border-slate-200 hover:border-slate-400'}`}
-              >
-                Tutte ({filteredCards.length})
-              </button>
-              {Object.entries(CATEGORIES).map(([key, cat]) => (
+            <div className="flex flex-wrap gap-2 mb-8 no-print sticky top-24 z-30 py-3 bg-slate-100/80 backdrop-blur-md border-b font-black justify-between items-center">
+              <div className="flex flex-wrap gap-2">
                 <button 
-                  key={key} 
-                  onClick={() => setFilter(key)} 
-                  className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase border-2 flex items-center gap-2 transition ${filter === key ? `${cat.color} shadow-xl border-current` : 'bg-white text-slate-400 border-slate-200 hover:border-slate-400'}`}
+                  onClick={() => setFilter('ALL')} 
+                  className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase border-2 transition ${filter === 'ALL' ? 'bg-slate-900 text-white shadow-xl border-slate-900' : 'bg-white text-slate-400 border-slate-200 hover:border-slate-400'}`}
                 >
-                  {cat.icon} {cat.label}
+                  Tutte ({filteredCards.length})
                 </button>
-              ))}
+                {Object.entries(CATEGORIES).map(([key, cat]) => (
+                  <button 
+                    key={key} 
+                    onClick={() => setFilter(key)} 
+                    className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase border-2 flex items-center gap-2 transition ${filter === key ? `${cat.color} shadow-xl border-current` : 'bg-white text-slate-400 border-slate-200 hover:border-slate-400'}`}
+                  >
+                    {cat.icon} {cat.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={generateAllImages}
+                  className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2.5 rounded-xl font-black uppercase text-[10px] hover:bg-indigo-700 transition shadow-sm"
+                  title="Genera le illustrazioni per tutte le carte visibili (potrebbe richiedere tempo)"
+                >
+                  <Sparkles size={14}/> Genera Tutte
+                </button>
+                <button 
+                  onClick={() => downloadPDF('print-area', 'Mazzo_Carte.pdf')}
+                  className="flex items-center gap-2 bg-red-600 text-white px-4 py-2.5 rounded-xl font-black uppercase text-[10px] hover:bg-red-700 transition shadow-sm"
+                  title="Scarica tutte le carte visibili in formato PDF"
+                >
+                  <FileText size={14}/> Scarica PDF Mazzo
+                </button>
+              </div>
             </div>
 
-            <div id="print-area" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-4 gap-y-8 print:grid-cols-3">
-              {filteredCards.map((card, idx) => {
-                const uniqueId = isThematicMode ? `thematic-${idx}` : `base-${idx}`;
+            <div id="print-area" className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 print:grid-cols-3">
+              {filteredCards.map((card) => {
+                const currentDeck = isThematicMode && thematicDeck ? thematicDeck : baseDeck;
+                const originalIndex = currentDeck.findIndex(c => c.title === card.title && c.desc === card.desc);
+                const uniqueId = isThematicMode ? `thematic-${originalIndex}` : `base-${originalIndex}`;
                 const isSelected = selectedHand.some(c => c.title === card.title && c.desc === card.desc) || selectedFinals.some(c => c.title === card.title);
                 return (
                   <div key={uniqueId} className="relative group cursor-pointer" onClick={() => toggleManualCard(card)}>
@@ -325,6 +424,7 @@ const App = () => {
                       img={generatedImages[uniqueId]} 
                       loading={loadingCards[uniqueId]} 
                       onGenerate={() => handleGenerateImage(card, uniqueId)} 
+                      isMedium
                     />
                     {manualMode && (
                       <div className={`absolute -top-3 -right-3 w-8 h-8 rounded-full flex items-center justify-center border-2 border-white shadow-xl z-20 transition-all ${isSelected ? 'bg-green-500 text-white scale-110' : 'bg-slate-200 text-slate-400 scale-100'}`}>
@@ -341,11 +441,12 @@ const App = () => {
         {activeTab === 'PLAY' && (
           <div className="max-w-6xl mx-auto space-y-12 animate-in fade-in duration-700 font-medium">
             {!gameHand.length ? (
-              <div className="flex flex-col items-center justify-center py-32 bg-white rounded-[4rem] border-2 border-dashed border-slate-200 text-center shadow-inner">
+              <div className="flex flex-col items-center justify-center py-32 bg-white rounded-[4rem] border-2 border-dashed border-slate-200 text-center shadow-inner px-4">
                 <Play size={64} className="text-indigo-100 mb-6"/>
-                <h2 className="text-2xl font-black text-slate-300 uppercase tracking-widest mb-8 text-center">Nessuna mano estratta...</h2>
+                <h2 className="text-2xl font-black text-slate-400 uppercase tracking-widest mb-4 text-center">Inizia la tua avventura</h2>
+                <p className="text-slate-500 font-medium mb-8 text-center max-w-md">Estrai una mano casuale dal mazzo per iniziare a raccontare la tua storia. Usa le carte per superare gli ostacoli e raggiungere il tuo Finale Segreto.</p>
                 <button onClick={startGame} className="bg-indigo-600 text-white px-10 py-4 rounded-[2rem] font-black uppercase shadow-2xl hover:scale-105 transition-all tracking-widest text-sm">
-                  Estrai Carte
+                  Estrai la tua Mano
                 </button>
               </div>
             ) : (
@@ -353,18 +454,32 @@ const App = () => {
                 <div className="flex flex-col md:flex-row justify-between items-end gap-4 mb-10 border-b border-slate-200 pb-6">
                   <div>
                     <h2 className="text-4xl font-black text-slate-900 uppercase mt-3 tracking-tighter">La Tua Mano</h2>
-                    <p className="text-slate-500 font-medium mt-2 text-lg">Clicca una carta per ingrandirla.</p>
+                    <p className="text-slate-500 font-medium mt-2 text-lg max-w-2xl">Racconta la tua storia usando queste carte. Clicca su una carta per ingrandirla o per generare la sua illustrazione con l'IA.</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <button onClick={generateStoryFromHand} className="flex items-center gap-2 bg-indigo-50 text-indigo-700 border-2 border-indigo-100 px-6 py-3 rounded-2xl font-black text-xs uppercase hover:bg-indigo-100 transition shadow-sm active:scale-95">
+                    <button 
+                      onClick={generateAllImagesForHand}
+                      className="flex items-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase hover:bg-indigo-700 transition shadow-sm active:scale-95"
+                      title="Genera le illustrazioni per tutte le carte della tua mano"
+                    >
+                      <Sparkles size={18}/> Genera Illustrazioni
+                    </button>
+                    <button 
+                      onClick={() => downloadPDF('hand-print-area', 'La_Tua_Mano.pdf')}
+                      className="flex items-center gap-2 bg-red-600 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase hover:bg-red-700 transition shadow-sm active:scale-95"
+                      title="Scarica le carte della tua mano in formato PDF"
+                    >
+                      <FileText size={18}/> Scarica PDF Mano
+                    </button>
+                    <button onClick={generateStoryFromHand} className="flex items-center gap-2 bg-indigo-50 text-indigo-700 border-2 border-indigo-100 px-6 py-3 rounded-2xl font-black text-xs uppercase hover:bg-indigo-100 transition shadow-sm active:scale-95" title="Crea una storia basata sulle carte che hai estratto">
                       <Sparkles size={18}/> Genera Storia AI
                     </button>
-                    <button onClick={startGame} className="flex items-center gap-2 bg-white text-slate-600 border-2 px-6 py-3 rounded-2xl font-black text-xs uppercase active:scale-95 transition-all shadow-sm">
-                      <RefreshCw size={18}/> Rimescola
+                    <button onClick={startGame} className="flex items-center gap-2 bg-white text-slate-600 border-2 px-6 py-3 rounded-2xl font-black text-xs uppercase active:scale-95 transition-all shadow-sm" title="Scarta queste carte ed estrai una nuova mano">
+                      <RefreshCw size={18}/> Nuova Mano
                     </button>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
+                <div id="hand-print-area" className="grid grid-cols-1 md:grid-cols-3 gap-10">
                   {gameHand.map((card, i) => (
                     <div key={`play-hand-${i}`} className="cursor-zoom-in group font-medium" onClick={() => setZoomedCard({ card, cat: CATEGORIES[card.cat], img: generatedImages[`play-hand-${i}`], loading: loadingCards[`play-hand-${i}`] })}>
                        <CardUI card={card} cat={CATEGORIES[card.cat] || CATEGORIES.SITUAZIONE} img={generatedImages[`play-hand-${i}`]} loading={loadingCards[`play-hand-${i}`]} isMedium />
@@ -374,7 +489,7 @@ const App = () => {
                     <div key={`final-${i}`} className="w-full aspect-[2.5/3.5] perspective-1000">
                       <div className={`relative w-full h-full transition-transform duration-1000 transform-style-3d cursor-pointer ${revealedFinals.includes(i) ? 'rotate-y-180' : ''}`} onClick={() => setRevealedFinals(prev => prev.includes(i) ? prev.filter(f => f !== i) : [...prev, i])}>
                         <div className="absolute inset-0 backface-hidden bg-indigo-950 rounded-[2.5rem] flex flex-col items-center justify-center text-white border-[8px] border-white/5 shadow-xl overflow-hidden group">
-                          <div className="absolute inset-0 bg-gradient-to-br from-indigo-800 to-black opacity-90 rounded-[2.5rem]"></div>
+                          <div className="absolute inset-0 opacity-90 rounded-[2.5rem]" style={{ background: 'linear-gradient(to bottom right, #3730a3, #000000)' }}></div>
                           <div className="relative z-10 flex flex-col items-center text-center p-6">
                             <Flag size={40} className="opacity-40 mb-4 animate-pulse"/>
                             <span className="text-[10px] font-black uppercase tracking-[0.5em] mb-2 text-indigo-300 opacity-60 whitespace-nowrap">Segreto</span>
@@ -401,7 +516,7 @@ const App = () => {
              <div className="prose prose-slate max-w-none text-left">
                 <div className="flex flex-col items-center text-center mb-12">
                    <h1 className="text-4xl md:text-5xl font-black text-slate-900 mb-6 uppercase tracking-tighter whitespace-pre-wrap">Guida all'App: "C’era una volta… online"</h1>
-                   <p className="text-slate-500 text-lg">Benvenuto nel laboratorio digitale di storytelling. Questa app è uno strumento educativo progettato per affrontare il tema del cyberbullismo attraverso la narrazione collaborativa.</p>
+                   <p className="text-slate-500 text-lg">Benvenuto nel laboratorio digitale di storytelling. Questa app è uno strumento educativo progettato per affrontare il tema del cyberbullismo attraverso la narrazione collaborativa. Esplora le carte, componi il tuo mazzo e usa l'IA per generare storie uniche.</p>
                    
                    <div className="bg-amber-50 p-8 rounded-3xl border-2 border-amber-100 text-sm text-amber-900 mt-8 shadow-inner leading-relaxed">
                       <div className="flex items-center justify-center gap-3 mb-3">
@@ -480,46 +595,6 @@ const App = () => {
           body { background: white !important; margin: 0; padding: 0; } 
           #print-area { display: grid !important; grid-template-columns: repeat(3, 1fr) !important; gap: 20px !important; } 
           .story-render { padding: 0 !important; color: black !important; }
-          
-          /* Stili per la stampa del modale AI */
-          .fixed.inset-0.z-50 {
-            position: absolute !important;
-            inset: auto !important;
-            background: transparent !important;
-            display: block !important;
-          }
-          .fixed.inset-0.z-50 > div {
-            box-shadow: none !important;
-            border: none !important;
-            max-width: 100% !important;
-            width: 100% !important;
-          }
-          .fixed.inset-0.z-50 .bg-gradient-to-r {
-            background: transparent !important;
-            color: black !important;
-            padding: 0 !important;
-            margin-bottom: 20px !important;
-            border-bottom: 2px solid black !important;
-          }
-          .fixed.inset-0.z-50 .bg-gradient-to-r button {
-            display: none !important;
-          }
-          .fixed.inset-0.z-50 .overflow-y-auto {
-            overflow: visible !important;
-            max-height: none !important;
-            background: transparent !important;
-            padding: 0 !important;
-          }
-          .fixed.inset-0.z-50 .border-t {
-            display: none !important;
-          }
-          
-          /* Nascondi il resto dell'app quando il modale è aperto in stampa */
-          body > div > header,
-          body > div > main > div:not(.fixed),
-          body > div > footer {
-            display: none !important;
-          }
         }
       `}</style>
     </div>

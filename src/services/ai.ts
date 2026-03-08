@@ -19,6 +19,19 @@ export const generateStory = async (prompt: string, sysPrompt: string) => {
   }
 };
 
+export const generateRandomSituation = async (): Promise<string> => {
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: "Genera una singola frase (massimo 10 parole) che descriva uno scenario o un tema specifico legato al cyberbullismo, alla sicurezza online o all'educazione digitale (es. 'Sicurezza su Minecraft', 'Cyberbullismo su TikTok', 'Adescamento online', 'Dipendenza da smartphone'). Sii creativo e specifico. Restituisci SOLO la frase, senza virgolette o punteggiatura finale.",
+    });
+    return response.text?.trim() || "Sicurezza online";
+  } catch (error) {
+    console.error("Error generating random situation:", error);
+    return "Cyberbullismo sui social";
+  }
+};
+
 export const generateThematicDeck = async (topic: string, count: number): Promise<CardData[]> => {
   try {
     const response = await ai.models.generateContent({

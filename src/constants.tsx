@@ -36,17 +36,6 @@ export const STORY_LENGTHS: StoryLength[] = [
   { id: 'lunga', label: 'Lunga', desc: 'Circa 500 parole' }
 ];
 
-export const RANDOM_SITUATIONS = [
-  "Un gruppo WhatsApp segreto creato solo per prendere in giro il nuovo compagno di classe.",
-  "Commenti d'odio continui sotto i video TikTok di una ragazza che ama ballare.",
-  "Esclusione sistematica di uno studente dai server di gioco online della classe.",
-  "Voci false diffuse tramite un profilo Instagram anonimo (Spotted).",
-  "Una foto imbarazzante scattata negli spogliatoi della palestra e condivisa via Telegram.",
-  "Body shaming pesante rivolto a un ragazzo durante una lezione in DAD.",
-  "Creazione di un meme offensivo usando una vecchia foto d'infanzia di una compagna.",
-  "Un litigio nato su un server Minecraft che degenera in minacce reali."
-];
-
 export const REAL_DECK: CardData[] = [
   // PERSONAGGI
   { title: "Lo studente nuovo", desc: "È appena arrivato nella classe e non conosce ancora nessuno.", cat: "PERSONAGGIO" },
