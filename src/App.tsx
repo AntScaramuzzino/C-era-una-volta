@@ -62,43 +62,58 @@ const App = () => {
   };
 
   const handleGenerateImage = async (card: CardData, uniqueId: string, force = false) => {
-    if (!force && generatedImages[uniqueId]) return;
+    if (!force && generatedImages[uniqueId]) return true;
     setLoadingCards(prev => ({ ...prev, [uniqueId]: true }));
     try {
       const imgData = await generateCardImage(card, selectedStyle.prompt);
       if (imgData) {
         setGeneratedImages(prev => ({ ...prev, [uniqueId]: imgData }));
       }
-    } catch (e) { 
+      setLoadingCards(prev => ({ ...prev, [uniqueId]: false }));
+      return true;
+    } catch (e: any) { 
       console.error("Img error", e); 
+      setLoadingCards(prev => ({ ...prev, [uniqueId]: false }));
+      const errorString = String(e?.message || e);
+      if (errorString.includes("429") || errorString.includes("RESOURCE_EXHAUSTED") || e?.status === 429) {
+        return false; // Rate limit hit
+      }
+      return true; // Other errors, continue
     }
-    setLoadingCards(prev => ({ ...prev, [uniqueId]: false }));
   };
 
   const generateAllImages = async () => {
     const currentDeck = isThematicMode && thematicDeck ? thematicDeck : baseDeck;
     const cardsToGenerate = filter === 'ALL' ? currentDeck : currentDeck.filter(c => c.cat === filter);
     
-    // Generate images in batches of 5 to avoid rate limits while being faster
-    const batchSize = 5;
+    // Generate images in batches of 2 to avoid rate limits
+    const batchSize = 2;
+    let rateLimitHit = false;
     for (let i = 0; i < cardsToGenerate.length; i += batchSize) {
+      if (rateLimitHit) break;
       const batch = cardsToGenerate.slice(i, i + batchSize);
       const promises = batch.map(async (card) => {
         const originalIndex = currentDeck.findIndex(c => c.title === card.title && c.desc === card.desc);
-        if (originalIndex === -1) return;
+        if (originalIndex === -1) return true;
         
         const uniqueId = isThematicMode ? `thematic-${originalIndex}` : `base-${originalIndex}`;
         
         if (!generatedImages[uniqueId] && !loadingCards[uniqueId]) {
-          await handleGenerateImage(card, uniqueId);
+          return await handleGenerateImage(card, uniqueId);
         }
+        return true;
       });
       
-      await Promise.all(promises);
+      const results = await Promise.all(promises);
+      if (results.some(res => res === false)) {
+        rateLimitHit = true;
+        alert("Hai raggiunto il limite di generazione immagini (Quota Esaurita). Attendi un po' prima di riprovare.");
+        break;
+      }
       
-      // Small delay between batches
+      // Delay between batches
       if (i + batchSize < cardsToGenerate.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
   };
@@ -156,20 +171,28 @@ const App = () => {
       ...finals.map((card, i) => ({ card, uniqueId: `play-final-${i}` }))
     ];
 
-    // Generate images in batches of 5
-    const batchSize = 5;
+    // Generate images in batches of 2
+    const batchSize = 2;
+    let rateLimitHit = false;
     for (let i = 0; i < allCards.length; i += batchSize) {
+      if (rateLimitHit) break;
       const batch = allCards.slice(i, i + batchSize);
       const promises = batch.map(async ({ card, uniqueId }) => {
         if (!generatedImages[uniqueId] && !loadingCards[uniqueId]) {
-          await handleGenerateImage(card, uniqueId, true);
+          return await handleGenerateImage(card, uniqueId, true);
         }
+        return true;
       });
       
-      await Promise.all(promises);
+      const results = await Promise.all(promises);
+      if (results.some(res => res === false)) {
+        rateLimitHit = true;
+        alert("Hai raggiunto il limite di generazione immagini (Quota Esaurita). Attendi un po' prima di riprovare.");
+        break;
+      }
       
       if (i + batchSize < allCards.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
   };
